@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tiny-ja-wakeword マイクデモ</title>
+<style>
+:root {
+  --bg: #F2F5F7; --surface: #FFFFFF; --ink: #13212C; --muted: #56687A; --line: #D3DCE4;
+  --sure: #D9481F; --sure-soft: #FBE9E2; --maybe: #B7791F; --maybe-soft: #FBF1DC;
+  --score: #0086A3; --wait-soft: #DDF0F3;
+  --mono: "Cascadia Mono", "Consolas", "Menlo", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0E1820; --surface: #16232E; --ink: #E6EDF2; --muted: #9BAAB8; --line: #2A3A47;
+    --sure: #FF8757; --sure-soft: #3A2218; --maybe: #E3B341; --maybe-soft: #352B12;
+    --score: #4CC3D3; --wait-soft: #12333A; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 "Yu Gothic UI", "Hiragino Sans", "Meiryo", sans-serif; }
+main { max-width: 60rem; margin: 0 auto; padding: 1.5rem max(16px, 3vw) 3rem; display: grid; gap: 1.2rem; }
+h1 { font-size: 1.3rem; margin: 0; }
+h2 { font-size: .95rem; margin: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1rem 1.1rem; display: grid; gap: .8rem; min-width: 0; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1.2rem; }
+.top { display: flex; flex-wrap: wrap; gap: .8rem 1.2rem; align-items: center; justify-content: space-between; }
+button { font: inherit; padding: .42rem .9rem; border-radius: 5px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+button.main { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700; }
+button.preset { font-size: .82rem; padding: .28rem .65rem; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--score); outline-offset: 2px; }
+input[type=text], select { font: inherit; padding: .45rem .6rem; border-radius: 5px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); min-width: 0; width: 100%; }
+label { font-size: .85rem; color: var(--muted); display: grid; gap: .25rem; }
+.row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.row > input, .row > select { flex: 1; }
+.muted { color: var(--muted); font-size: .85rem; }
+.mono { font-family: var(--mono); }
+
+#banner { border-radius: 8px; padding: 1.4rem 1.2rem; text-align: center; border: 2px solid var(--line); background: var(--surface); display: grid; gap: .2rem; }
+#banner .big { font-size: 1.7rem; font-weight: 700; line-height: 1.4; }
+#banner .small { color: var(--muted); font-size: .9rem; min-height: 1.5em; }
+#banner[data-mode=waiting] { background: var(--wait-soft); border-color: var(--score); }
+#banner[data-mode=maybe] { background: var(--maybe-soft); border-color: var(--maybe); }
+#banner[data-mode=awake] { background: var(--sure-soft); border-color: var(--sure); }
+
+canvas { width: 100%; height: 190px; display: block; }
+#level { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+#level i { display: block; height: 100%; width: 0; background: var(--score); }
+#heard { font-family: var(--mono); min-height: 1.7em; white-space: nowrap; overflow: hidden; display: flex; justify-content: flex-end; }
+.chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+.chips span { font-family: var(--mono); padding: .1rem .5rem; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
+.slider { display: grid; grid-template-columns: 4.5rem 1fr 3.2rem; gap: .6rem; align-items: center; font-size: .9rem; }
+.slider input { min-width: 0; width: 100%; }
+.slider output { font-family: var(--mono); text-align: right; }
+.dot { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; margin-right: .35rem; }
+#notice { color: var(--sure); min-height: 1.5em; font-size: .9rem; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 400; font-size: .8rem; }
+td.num, th.num { text-align: right; font-family: var(--mono); }
+.logwrap { max-height: 16rem; overflow: auto; }
+</style>
+</head>
+<body>
+<main>
+<div class="top">
+  <h1>tiny-ja-wakeword マイクデモ</h1>
+  <div class="row">
+    <label class="row" style="display:flex"><input type="checkbox" id="agc"> マイクの音量を自動でそろえる</label>
+    <button class="main" id="toggle">聞きはじめる</button>
+  </div>
+</div>
+
+<div id="banner" data-mode="stopped" role="status" aria-live="polite">
+  <div class="big" id="big">停止中</div>
+  <div class="small" id="small">「聞きはじめる」を押すと、マイクの音をローカルで検出します。</div>
+</div>
+<div id="notice" role="alert"></div>
+
+<div class="panel">
+  <div class="top"><h2>一致確率（直近 10 秒・0〜100%）</h2>
+    <span class="muted"><span class="dot" style="background:var(--sure)"></span>確定　<span class="dot" style="background:var(--maybe)"></span>かも　<span class="dot" style="background:var(--score)"></span>一致確率</span></div>
+  <canvas id="chart" aria-label="直近10秒の一致確率と、確定・かものしきい値"></canvas>
+  <div class="muted">マイクの音量</div>
+  <div id="level"><i></i></div>
+  <div class="muted">モデルに聞こえた音素（新しい音が右）</div>
+  <div id="heard" class="mono"><span id="heardtext"></span></div>
+</div>
+
+<div class="cols">
+  <div class="panel">
+    <h2>ウェイクワード</h2>
+    <form id="enrol" class="row">
+      <input type="text" id="phrase" autocomplete="off" aria-label="ウェイクワード" placeholder="例: オーケー、グーグル / ヘイ、シリ">
+      <button type="submit">設定</button>
+    </form>
+    <div class="chips" id="phones"></div>
+    <div class="muted" id="phraseinfo"></div>
+  </div>
+  <div class="panel">
+    <h2>判定しきい値（0〜100%）</h2>
+    <div class="row">
+      <button type="button" class="preset" data-sure="30" data-maybe="20">反応重視 (30%)</button>
+      <button type="button" class="preset" data-sure="50" data-maybe="30">標準 (50%)</button>
+      <button type="button" class="preset" data-sure="70" data-maybe="45">厳しめ (70%)</button>
+    </div>
+    <div class="slider"><span>確定</span><input type="range" id="sure" min="10" max="95" step="5"><output id="surev"></output></div>
+    <div class="slider"><span>かも</span><input type="range" id="maybe" min="5" max="95" step="5"><output id="maybev"></output></div>
+    <div class="muted">高いほど厳しく（誤通知が減り）、低いほど反応しやすくなります。まずは標準 50% がおすすめです。</div>
+  </div>
+  <div class="panel">
+    <h2>モデル（8 ビット ONNX）</h2>
+    <select id="model" aria-label="モデル"></select>
+    <div class="muted">どちらも約 625 KB の超小型モデルで、辞書なしでひらがな・カタカナの任意の言葉をすぐ検出できます。</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>検出ログ</h2>
+  <div class="logwrap"><table>
+    <thead><tr><th>時刻</th><th>判定</th><th class="num">確率</th><th class="num">区間の長さ</th><th>メモ</th></tr></thead>
+    <tbody id="log"></tbody>
+  </table></div>
+</div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const MAYBE_HOLD = 4, AWAKE_HOLD = 3;
+const HISTORY = 250; // 10 s at 0.04 s/frame
+let state = null, scores = new Array(HISTORY).fill(0), marks = [];
+let ctx = null, media = null, node = null, running = false;
+let pending = [], pendingLength = 0, sending = false;
+let mode = "stopped", until = 0, heard = [];
+
+async function call(path, body, kind = "application/json") {
+  const response = await fetch(path, body === undefined ? {} :
+    { method: "POST", headers: { "Content-Type": kind }, body: kind === "application/json" ? JSON.stringify(body) : body });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "サーバでエラーが起きました。");
+  return data;
+}
+
+function notice(text) { $("notice").textContent = text || ""; }
+
+function show(next) {
+  state = next;
+  $("phrase").value = state.phrase;
+  $("phones").replaceChildren(...state.phones.map(p => Object.assign(document.createElement("span"), { textContent: p })));
+  $("phraseinfo").textContent = `${state.phones.length}音素（最大 ${state.longest_seconds} 秒）。` +
+    (state.short ? " 6 音素より短い語句は誤通知が増えやすくなります。" : " ひらがな・カタカナで好きな言葉へ変更できます。");
+  const surePct = Math.round(state.sure * 100);
+  const maybePct = Math.round(state.maybe * 100);
+  $("sure").value = surePct; $("maybe").value = maybePct;
+  $("surev").textContent = `${surePct}%`; $("maybev").textContent = `${maybePct}%`;
+  const select = $("model");
+  select.replaceChildren(...state.models.map(m => Object.assign(document.createElement("option"), { value: m.id, textContent: m.label })));
+  select.value = state.model;
+  banner();
+}
+
+function setMode(next, seconds) { mode = next; until = seconds ? performance.now() + seconds * 1000 : 0; banner(); }
+
+function banner() {
+  const left = Math.max(0, Math.ceil((until - performance.now()) / 1000));
+  const phrase = state ? state.phrase : "";
+  const text = {
+    stopped: ["停止中", "「聞きはじめる」を押すと、マイクの音をローカルで検出します。"],
+    waiting: ["待機中", `「${phrase}」を待っています。`],
+    maybe: ["かも", `呼ばれたかもしれません。続きを聞いています（あと ${left} 秒）。`],
+    awake: ["起動しました", `「${phrase}」を検出しました（あと ${left} 秒で待機に戻ります）。`],
+  }[mode];
+  $("banner").dataset.mode = mode;
+  $("big").textContent = text[0]; $("small").textContent = text[1];
+}
+
+function log(level, prob, length, memo) {
+  const row = document.createElement("tr");
+  const cells = [new Date().toLocaleTimeString("ja-JP"), level, prob ?? "", length ?? "", memo ?? ""];
+  cells.forEach((value, i) => {
+    const cell = document.createElement("td");
+    if (i === 2 || i === 3) cell.className = "num";
+    cell.textContent = value; row.append(cell);
+  });
+  $("log").prepend(row);
+  while ($("log").children.length > 60) $("log").lastChild.remove();
+}
+
+function handle(update) {
+  for (const s of update.scores) { scores.push(s); scores.shift(); marks.forEach(m => m.age++); }
+  marks = marks.filter(m => m.age < HISTORY);
+  for (const e of update.events) {
+    marks.push({ age: update.scores.length - 1 - e.at, level: e.level, score: e.prob });
+    if (e.level === "sure") {
+      log("確定", `${e.prob.toFixed(0)}%`, e.length_seconds.toFixed(2) + "秒", mode === "maybe" ? "「かも」のあとに確定" : "");
+      setMode("awake", AWAKE_HOLD);
+    } else {
+      log("かも", `${e.prob.toFixed(0)}%`, e.length_seconds.toFixed(2) + "秒", mode === "awake" ? "起動中のため表示は変えず" : "");
+      if (mode !== "awake") setMode("maybe", MAYBE_HOLD);
+    }
+  }
+  if (update.heard.length) {
+    heard.push(...update.heard); heard = heard.slice(-60);
+    $("heardtext").textContent = heard.join(" ");
+  }
+  draw();
+}
+
+function draw() {
+  const canvas = $("chart"), ratio = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w * ratio) { canvas.width = w * ratio; canvas.height = h * ratio; }
+  const g = canvas.getContext("2d"), css = getComputedStyle(document.documentElement);
+  const colour = name => css.getPropertyValue(name).trim();
+  g.setTransform(ratio, 0, 0, ratio, 0, 0); g.clearRect(0, 0, w, h);
+  const left = 40, right = 8, top = 10, bottom = 18;
+  const X = i => left + (w - left - right) * i / (HISTORY - 1);
+  const Y = v => top + (h - top - bottom) * (1 - Math.min(100, Math.max(0, v)) / 100);
+  g.font = "11px sans-serif"; g.fillStyle = colour("--muted"); g.strokeStyle = colour("--line"); g.lineWidth = 1;
+  for (const v of [0, 25, 50, 75, 100]) {
+    g.beginPath(); g.moveTo(left, Y(v)); g.lineTo(w - right, Y(v)); g.stroke();
+    g.textAlign = "right"; g.fillText(`${v}%`, left - 6, Y(v) + 4);
+  }
+  g.textAlign = "left"; g.fillText("10秒前", left, h - 4); g.textAlign = "right"; g.fillText("いま", w - right, h - 4);
+  if (!state) return;
+  for (const [value, name, dash] of [[state.sure * 100, "--sure", []], [state.maybe * 100, "--maybe", [6, 4]]]) {
+    g.strokeStyle = colour(name); g.lineWidth = 1.5; g.setLineDash(dash);
+    g.beginPath(); g.moveTo(left, Y(value)); g.lineTo(w - right, Y(value)); g.stroke();
+  }
+  g.setLineDash([]); g.strokeStyle = colour("--score"); g.lineWidth = 2; g.lineJoin = "round"; g.beginPath();
+  scores.forEach((s, i) => {
+    if (i === 0) g.moveTo(X(i), Y(s)); else g.lineTo(X(i), Y(s));
+  });
+  g.stroke();
+  for (const m of marks) {
+    const x = X(HISTORY - 1 - m.age), y = Y(m.score);
+    g.beginPath(); g.arc(x, y, 6, 0, 7);
+    g.fillStyle = colour(m.level === "sure" ? "--sure" : "--surface"); g.fill();
+    g.strokeStyle = colour(m.level === "sure" ? "--surface" : "--maybe"); g.lineWidth = 2.5; g.stroke();
+  }
+}
+
+async function send() {
+  if (sending || !running || !pendingLength) return;
+  sending = true;
+  try {
+    const all = new Float32Array(pendingLength);
+    let at = 0; for (const block of pending) { all.set(block, at); at += block.length; }
+    pending = []; pendingLength = 0;
+    const pcm = new Int16Array(all.length);
+    for (let i = 0; i < all.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(all[i] * 32768)));
+    handle(await call("/audio", pcm.buffer, "application/octet-stream"));
+    notice(pendingLength > ctx.sampleRate * 2 ? "処理が音声に追いついていません。表示が遅れています。" : "");
+  } catch (error) {
+    notice(error.message); await stop();
+  } finally {
+    sending = false;
+  }
+}
+
+const TAP = `class Tap extends AudioWorkletProcessor {
+  process(inputs) { const c = inputs[0][0]; if (c) this.port.postMessage(c.slice()); return true; }
+}
+registerProcessor("tap", Tap);`;
+
+async function start() {
+  notice("");
+  try {
+    media = await navigator.mediaDevices.getUserMedia({ audio: {
+      channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: $("agc").checked } });
+  } catch (error) {
+    notice("マイクを使えませんでした。ブラウザでマイクの使用を許可してください。"); return;
+  }
+  try { ctx = new AudioContext({ sampleRate: 16000 }); ctx.createMediaStreamSource(media); }
+  catch (error) { if (ctx) await ctx.close(); ctx = new AudioContext(); }
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([TAP], { type: "application/javascript" })));
+  await call("/start", { rate: ctx.sampleRate });
+  node = new AudioWorkletNode(ctx, "tap");
+  node.port.onmessage = event => {
+    if (!running) return;
+    const block = event.data; let peak = 0;
+    for (let i = 0; i < block.length; i++) peak = Math.max(peak, Math.abs(block[i]));
+    $("level").firstElementChild.style.width = Math.min(100, Math.sqrt(peak) * 100) + "%";
+    pending.push(block); pendingLength += block.length;
+    if (pendingLength >= ctx.sampleRate * 0.1) send();
+  };
+  ctx.createMediaStreamSource(media).connect(node);
+  scores.fill(0); marks = []; heard = []; $("heardtext").textContent = "";
+  running = true; $("toggle").textContent = "止める"; setMode("waiting");
+}
+
+async function stop() {
+  running = false; pending = []; pendingLength = 0;
+  if (media) media.getTracks().forEach(track => track.stop());
+  if (ctx) await ctx.close();
+  media = ctx = node = null;
+  $("level").firstElementChild.style.width = "0";
+  $("toggle").textContent = "聞きはじめる"; setMode("stopped");
+}
+
+$("toggle").addEventListener("click", () => running ? stop() : start().catch(error => { notice(error.message); stop(); }));
+$("agc").addEventListener("change", async () => { if (running) { await stop(); await start(); } });
+
+async function configure(change) {
+  try { show(await call("/configure", change)); notice(""); draw(); return true; }
+  catch (error) { notice(error.message); return false; }
+}
+
+$("enrol").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (await configure({ phrase: $("phrase").value })) { scores.fill(0); marks = []; log("—", "", "", `ウェイクワードを「${state.phrase}」にしました`); }
+});
+$("model").addEventListener("change", async () => {
+  if (await configure({ model: $("model").value })) log("—", "", "", `モデルを ${state.model} にしました`);
+  else $("model").value = state.model;
+});
+document.querySelectorAll("button.preset").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const sure = Number(btn.dataset.sure) / 100;
+    const maybe = Number(btn.dataset.maybe) / 100;
+    configure({ sure, maybe });
+  });
+});
+
+let timer = null;
+for (const id of ["sure", "maybe"]) {
+  $(id).addEventListener("input", () => {
+    let sure = +$("sure").value, maybe = +$("maybe").value;
+    if (maybe > sure) { if (id === "sure") maybe = sure; else sure = maybe; }
+    $("sure").value = sure; $("maybe").value = maybe;
+    state.sure = sure / 100; state.maybe = maybe / 100;
+    $("surev").textContent = `${sure}%`; $("maybev").textContent = `${maybe}%`;
+    draw(); clearTimeout(timer); timer = setTimeout(() => configure({ sure: sure / 100, maybe: maybe / 100 }), 200);
+  });
+}
+
+setInterval(() => {
+  if (until && performance.now() >= until) {
+    if (mode === "maybe") log("—", "", "", "「かも」のまま確定せず、待機に戻りました");
+    setMode(running ? "waiting" : "stopped");
+  } else if (until) banner();
+}, 200);
+window.addEventListener("resize", draw);
+call("/state").then(show).then(draw).catch(error => notice(error.message));
+</script>
+</body>
+</html>

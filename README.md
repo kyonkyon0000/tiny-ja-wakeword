@@ -4,6 +4,8 @@
 
 ひらがな・カタカナで好きな言葉を指定するだけで、追加学習や外部辞書（OpenJTalk 等）なしにすぐ動作します。
 
+![ブラウザマイクデモで「オーケー、グーグル」を検出した画面](docs/demo-screenshot.png)
+
 本モデルは、公開されている日本語音素キーワード検出モデル [mitsu-h/icefall-ja-phoneme-kws-cv25](https://huggingface.co/mitsu-h/icefall-ja-phoneme-kws-cv25)（Zipformer Transducer・約 299 万重み・約 12 MB）をベースに蒸留して作成しました。
 154 時間の日本語音声と実測の環境音・室内反響を用いてわずか **53 万重み（8 ビット ONNX 約 629 KB）** へ小型化した結果、90 分連続評価（誤通知 0.5 回/時以下）の取りこぼし率で以下の精度を達成しています。
 
